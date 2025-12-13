@@ -1,0 +1,1013 @@
+### UK TRADE DATA PREPERATION ###
+
+
+-- Dataset too large to use table import wizard so manually loading in local file
+CREATE TABLE fulltrade (
+    v4_0 VARCHAR(255),
+    mmm_yy VARCHAR(20),
+    `Time` VARCHAR(50),
+    uk_only VARCHAR(50),
+    Geography VARCHAR(255),
+    sitc VARCHAR(255),
+    StandardIndustrialTradeClassification VARCHAR(255),
+    countries_and_territories VARCHAR(255),
+    CountriesAndTerritories VARCHAR(255),
+    trade_direction VARCHAR(50),
+    Direction VARCHAR(50)
+);
+
+
+load data local infile 'C:/Users/CalumBrown/OneDrive - Blend 360/Documents/Personal Development/Trade Project/fulltrade.csv' into table fulltrade
+fields terminated by ','
+enclosed by '"'
+lines terminated by '\r\n'
+ignore 1 lines;
+
+
+### MMM-YY AND TIME COLUMNS ###
+
+SELECT DISTINCT
+    mmm_yy
+FROM
+    fulltrade
+ORDER BY mmm_yy;
+
+-- Drop time column as redundant repated column
+alter table fulltrade 
+drop column `Time`;
+
+-- Will decide later on whether to keep as string format or convert to date format within a date dimension table. 
+
+### UK_ONLY AND GEOGRAPHY ###
+
+SELECT DISTINCT
+    uk_only
+FROM
+    fulltrade
+ORDER BY uk_only;
+
+SELECT DISTINCT
+    Geography
+FROM
+    fulltrade
+ORDER BY Geography;
+
+-- Both columns provide no information that could enhance analysis / will be used at any point. Will drop both columns from table 
+
+-- dropping both columns from table
+alter table fulltrade
+drop column uk_only,
+drop column Geography;
+
+
+## 'SITC' AND 'STANDARDINDUSTRIALTRADECLASSIFICATION'
+
+-- Can see we wont need both columns as sitc is just a duplicate of the industry code from next column
+
+ SELECT DISTINCT
+    StandardIndustrialTradeClassification
+FROM
+    fulltrade
+order by StandardIndustrialTradeClassification;
+
+-- cte to get total count of all industries
+ with industry as
+ (
+ SELECT DISTINCT
+    StandardIndustrialTradeClassification as industries
+FROM
+    fulltrade
+) 
+
+select count(industries) from industry;
+
+-- Queries show 123 different industries 
+-- It looks like there are sectors identified by 10 whole increments, 0 - live animals, 1. Beverages and tobacco, 2. Crude Materials...
+-- Within each sector there is different industries. For example 00: Live animals 01: Meat & meat preparations 02: Dairy products & eggs 03: Fish & shellfish...
+-- Is it possible that these industries all add up to sector total? If so then we have alot of repeated rows and redundant data 
+
+-- Checking total value for food and live animal sector 
+select sum(v4_0) 
+from fulltrade 
+where StandardIndustrialTradeClassification = '0: Food & live animals';
+
+-- Checking total value for all industries within food and live animal sector outwith sector total
+select sum(v4_0)
+from fulltrade 
+where StandardIndustrialTradeClassification like ('0_:%');
+
+-- Using a union statement to show these total values next to each other 
+select 'Food and Live animal sector' as industry, sum(v4_0) as total 
+from fulltrade 
+where StandardIndustrialTradeClassification = '0: Food & live animals' 
+union
+select 'Food and Live animal industries' as industry, sum(v4_0) as total
+from fulltrade
+where StandardIndustrialTradeClassification like ('0_:%');
+
+-- both add up to exactly 1414294 with only difference of rounding - meaning we have alot of rows repeating the same information. 
+-- total value for this sector would show as (2*1414294) but it should only be 1414294
+-- Will make sure this is the same for all sector / industries but imagine it will be as this is how data was set up
+-- Solution for this will be to remove all rows containing whole sector information then contain sector in industry dimension table so can group by whole sectors in future analysis
+
+-- Dropping all rows relating to whole sector - other than sector 7 and 8, 9, and total as further research is required into different subindustries
+delete 
+from fulltrade 
+where StandardIndustrialTradeClassification in 
+('0: Food & live animals', '2: Crude materials', '3: Fuels', '4: Animal & vegetable oils & fats', '5: Chemicals', '6: Material manufactures');
+
+-- Also appear to have issue as some industries that are then sub-categoried within that industry also. Example - 33: Oil, 33O: Crude oil, 33R: Refined oil 
+
+-- Union statement to show these values next to each other
+select '33:oil' as industry, sum(v4_0) 
+from fulltrade 
+where StandardIndustrialTradeClassification = '33: Oil' 
+union
+select 'other 33' as industry, sum(v4_0)
+from fulltrade
+where StandardIndustrialTradeClassification like ('33_:%');
+
+-- both add up to exactly 1709744 with only difference of rounding - meaning we now have subindustries within industries within sectors. 
+-- Solution again will be to remove either the industry as a whole and keep subindustries. Or remove subindustries and keep industry.
+-- Depends what granularity we want to be able to see during dashboard analysis s individual decisions will be taken
+
+-- Have decided to remove more granular and keep oil as a whole as will lead to more logical analysis later on
+delete
+from fulltrade
+where StandardIndustrialTradeClassification like ('33_:%');
+
+-- What does Fuels other than oil represent? Is this another sector combination of gas and elecricty (subindustries)? If so again will need to remove 
+
+-- Using a union statement to show these total values next to each other 
+select 'Fuels other than oil' as industry, sum(v4_0) as total 
+from fulltrade 
+where StandardIndustrialTradeClassification = '3OF: Fuels other than oil'
+union
+select 'Non-oil subindustries' as industry, sum(v4_0) as total
+from fulltrade
+where StandardIndustrialTradeClassification in ('32: Coal, coke & briquettes', '34: Gas', '35: Electricity');
+
+-- Can see from above comparison that this is another sector total therefore repated information. Provides more logical analysis if we leave in the sub-industries therefore will remove sector total
+
+-- Removing all rows with Fuels other than oil
+delete
+from fulltrade
+where StandardIndustrialTradeClassification = '3OF: Fuels other than oil';
+
+
+-- Moving on to looking at sector 7 Machinery and transport equipment - appears to be alot of grouping using subindustries in here
+-- Need to analyse to see what values are being summed into different groups
+-- Whilst also deciding what to do with (consumer, intermediate and capital) breakdown of industries
+
+-- Creating pivot tables to look at aggregated sum - filtering only for exports 
+select StandardIndustrialTradeClassification, sum(v4_0)
+from fulltrade
+where trade_direction = 'EX'
+group by StandardIndustrialTradeClassification
+having StandardIndustrialTradeClassification like('7%')
+order by StandardIndustrialTradeClassification;
+
+-- easier to analyse looking at one specific country - will use Germany
+select StandardIndustrialTradeClassification, sum(v4_0)
+from fulltrade
+where trade_direction = 'EX' and countries_and_territories = 'DE'
+group by StandardIndustrialTradeClassification
+having StandardIndustrialTradeClassification like('7%')
+order by StandardIndustrialTradeClassification;
+
+
+-- Can see an issue with 78. Road vehicles - looks like all rows containing 78. sum up to equal the total. WIll double check with below query
+
+-- Union statement to show comparison again
+select 'Road vehicles total' as industry, sum(v4_0) as total 
+from fulltrade 
+where StandardIndustrialTradeClassification = '78: Road vehicles'
+union
+select 'subindustries' as industry, sum(v4_0) as total
+from fulltrade
+where StandardIndustrialTradeClassification like ('78_:%');
+
+
+-- Going to keep subindustries as invisage cars will be an important analysis point further down the line
+
+-- Removing road vehicles rows
+delete
+from fulltrade
+where StandardIndustrialTradeClassification = '78: Road vehicles';
+
+
+-- Another issue with industry 79. Other transport Equipment. 
+-- 79: Other transport equipment791I: Road vehicles other than cars (intermediate)791K: Railway equipment (capital)792-3: Ships & aircraft792: Aircraft793: Ships
+-- Ships & Aircraft both add up to total ships and aircraft. then the 3 rows add up to total 79
+-- Think it is logical to keep subindustries in here for increased granularity
+-- Also issue with 7E electrical machinery and 7M mechanical machinery again with total industry rows. Going to keep whole industry total here as more logical for analysis 
+-- What is difference between '78I: Road vehicles other than cars (intermediate)' and '791I: Road vehicles other than cars (intermediate)'? 
+
+select * 
+from fulltrade
+where StandardIndustrialTradeClassification in ('78I: Road vehicles other than cars (intermediate)', '791I: Road vehicles other than cars (intermediate)');
+
+-- I see no logical reason for difference therefore will be fine to sum up as 1 during analysis 
+
+-- Removing Rows discussed in above commentary points
+delete
+from fulltrade
+where StandardIndustrialTradeClassification in 
+('79: Other transport equipment', '792-3: Ships & aircraft', '7EC: Electrical machinery (consumer)', '7EI: Electrical machinery (intermediate)',
+'7EK: Electrical machinery (intermediate)', '7MC: Mechanical machinery (consumer)', '7MI: Mechanical machinery (intermediate)', '7MK: Mechanical machinery (capital)'
+ );
+
+-- Now deleting sector total 
+delete
+from fulltrade
+where StandardIndustrialTradeClassification = '7: Machinery & transport equipment';
+
+
+
+-- Moving on to looking at sector 8 - miscellaneous manufactures
+-- Can again see alot of subindustries - how necessary is all this for anlaysis? 
+
+
+select distinct StandardIndustrialTradeClassification
+from fulltrade
+order by StandardIndustrialTradeClassification;
+
+-- Using single country again to analyse if any rows are totalling to equal others
+select StandardIndustrialTradeClassification, sum(v4_0)
+from fulltrade
+where trade_direction = 'EX' and countries_and_territories = 'DZ'
+group by StandardIndustrialTradeClassification
+having StandardIndustrialTradeClassification like('8%')
+order by StandardIndustrialTradeClassification;
+
+-- Not sure what 80. Other manufactures is the total of if anything? I think it is just its own row.
+-- Can check by seeing if total sector value is equal to sum of all industries 
+
+-- Below comparison shows they do not add up meaning we have totalled rows within the industries - need to figure out what these are
+select 'Sector 8 Total' as industry, sum(v4_0) as total 
+from fulltrade 
+where StandardIndustrialTradeClassification = '8: Miscellaneous manufactures'
+union
+select 'Industry total' as industry, sum(v4_0) as total
+from fulltrade
+where StandardIndustrialTradeClassification like ('8%:%');
+
+select StandardIndustrialTradeClassification, sum(v4_0)
+from fulltrade
+where trade_direction = 'EX' and countries_and_territories = 'DZ'
+group by StandardIndustrialTradeClassification
+having StandardIndustrialTradeClassification like('8%')
+order by StandardIndustrialTradeClassification;
+
+-- Looks like 8O: Other manufactures 8OC: Other miscellaneous manufactures (consumer) 8OI: Other miscellaneous manufactures (intermediate) 8OK: Other miscellaneous manufactures (capital) are all duplicated data
+-- Will need to double check this 
+
+-- cte with union statement to compare
+with sector8comparison as
+(
+select StandardIndustrialTradeClassification, sum(v4_0) as total
+from fulltrade
+group by StandardIndustrialTradeClassification
+having StandardIndustrialTradeClassification like('8%')
+order by StandardIndustrialTradeClassification
+)
+
+select 'Sector total' as industry, sum(total)
+from sector8comparison
+where StandardIndustrialTradeClassification = '8: Miscellaneous manufactures'
+union
+select 'Industry total' as industry, sum(total)
+from sector8comparison
+where StandardIndustrialTradeClassification not in 
+('8: Miscellaneous manufactures', '8O: Other manufactures', '8OC: Other miscellaneous manufactures (consumer)', '8OI: Other miscellaneous manufactures (intermediate)', '8OK: Other miscellaneous manufactures (capital)');
+
+-- Can see from above comparison that they are exactly equal - can therefore remove all these rows from table which will leave us with industries only
+
+delete 
+from fulltrade
+where StandardIndustrialTradeClassification in 
+('8: Miscellaneous manufactures', '8O: Other manufactures', '8OC: Other miscellaneous manufactures (consumer)', '8OI: Other miscellaneous manufactures (intermediate)', '8OK: Other miscellaneous manufactures (capital)');
+
+-- What does 'total' represent? 
+-- Can see total value for exports for afghanistan in dec 18 is 16.0. Is this equal to total exports for the month? If so then again repeated information
+
+SELECT 
+    *
+FROM
+    fulltrade
+WHERE
+    StandardIndustrialTradeClassification = 'T: Total' and mmm_yy = 'Dec-18' and countries_and_territories = 'AF' and trade_direction = 'EX';
+
+-- This is skewed due to repeated information within subindustries - manually calculated to be the same at 16.0
+select * 
+from fulltrade
+where StandardIndustrialTradeClassification != 'T: Total' and mmm_yy = 'Dec-18' and countries_and_territories = 'AF' and trade_direction = 'EX'
+order by StandardIndustrialTradeClassification;
+
+-- Above comparison result is skewed due to repeated information within subindustries - manually calculated to be the same at 16.0
+
+
+-- Removing all rows totalling exports / imports
+delete
+from fulltrade
+where StandardIndustrialTradeClassification = 'T: Total';
+
+-- Sector 9 unspecified goods - how helpful is this? Necessary to keep as contributes to total trade sums despite not providing much in the way of deeper analysis  
+
+select * 
+from fulltrade
+where StandardIndustrialTradeClassification = '9: Unspecified goods' and v4_0 > 0;
+
+
+-- Next is to decide what to do with all the industries split into consumer capital and intermediate
+-- I think it is more logical to combine and collapse the rows for analysis as isn't necessary for client to see split between consumer, capital and intermediate. 
+
+-- Updating column to replace all bracket values with blank 
+
+select distinct StandardIndustrialTradeClassification
+from fulltrade
+order by StandardIndustrialTradeClassification;
+
+-- Replaces all specified string in any row with blank
+update fulltrade
+set StandardIndustrialTradeClassification = replace(StandardIndustrialTradeClassification, '(consumer)', '');
+
+update fulltrade
+set StandardIndustrialTradeClassification = replace(StandardIndustrialTradeClassification, '(intermediate)', '');
+
+update fulltrade
+set StandardIndustrialTradeClassification = replace(StandardIndustrialTradeClassification, '(capital)', '');
+
+
+-- Removing the SITC code from industry column - -1 indicates to take evrything to right of colon
+update fulltrade
+set StandardIndustrialTradeClassification = SUBSTRING_INDEX(StandardIndustrialTradeClassification, ':', -1);
+
+
+select count(*)
+from(select distinct StandardIndustrialTradeClassification
+from fulltrade
+order by StandardIndustrialTradeClassification) as distinctind
+;
+
+-- Now left with 71 industries 
+-- Good to move on to rest of dataset
+
+#### COUNTRIESANDTERRITORIES 
+
+-- Again have 2 columns - 1 being a 2 letter country code and 1 the whole name 
+
+select distinct CountriesAndTerritories
+from fulltrade
+order by CountriesAndTerritories;
+
+-- Can see issues with grouped countries here - whole world, EU and nonEU 
+-- Also a few names that want to change how they'll appear 
+
+-- Removing all rows with total regional statistics
+delete 
+from fulltrade
+where CountriesAndTerritories in ('D5 - Non-EU (Rest of World)', 'B5 - EU(28)', 'W1 - Whole world');
+
+-- Changing how US is shows just to be the states 
+update fulltrade
+set CountriesAndTerritories = 'MM - Myanmar'
+where CountriesAndTerritories = 'MM - Myanmar (Burma)';
+
+update fulltrade
+set CountriesAndTerritories = 'US - United States'
+where CountriesAndTerritories like ('US - Unite%');
+
+-- Substring to just leave country name
+update fulltrade
+set CountriesAndTerritories = substring(CountriesAndTerritories, 6);
+
+-- Blanks in the countries_and_territories column?
+
+select distinct CountriesAndTerritories
+from fulltrade
+where countries_and_territories = '';
+
+-- All are from Namibia - will check there is no other NA in dataset
+
+select distinct countries_and_territories
+from fulltrade 
+order by countries_and_territories;
+
+-- Setting all Namiba rows to NA 
+update fulltrade
+set countries_and_territories = 'NA'
+where CountriesAndTerritories = 'Namibia';
+
+
+#### DIRECTION AND TRADE_DIRECTION 
+
+-- Removing trade_direction column as repated information 
+alter table fulltrade
+drop column trade_direction;
+
+
+-- Moving on to collapsing rows that are now duplicates (but with different values) having removed consumer, capital and intermediate.
+-- This will drop alot of rows and make dashboard more efficient in future analysis
+
+-- Using window function to group combined rows and show duplicates
+with combined as 
+(
+select *, row_number() over(partition by mmm_yy, StandardIndustrialTradeClassification, countries_and_territories, CountriesAndTerritories, Direction) as rownum
+from fulltrade
+)
+
+select * 
+from combined
+where rownum > 1;
+
+-- This shows that i will be able to drop 1.1 million rows if collapse the rows  - should go down to 3ish million
+-- I will have to drop sitc if i want to do this - worth making industry column now as this will be easier to do with that information 
+
+select distinct sitc, StandardIndustrialTradeClassification
+from fulltrade
+group by sitc, StandardIndustrialTradeClassification
+order by sitc;
+
+
+alter table fulltrade
+add Sector VARCHAR(100);
+
+update fulltrade
+set Sector = case
+	when sitc like ('0%') then 'Food & live animals'
+	when sitc like ('1%') then 'Beverages & tobacco'
+    when sitc like ('2%') then 'Crude materials'
+    when sitc like ('3%') then 'Fuels'
+    when sitc like ('4%') then 'Animal & vegetable oils & Fats'
+    when sitc like ('5%') then 'Chemicals'
+    when sitc like ('6%') then 'Material manufactures'
+    when sitc like ('7%') then 'Machinery & transport equipment'
+    when sitc like ('8%') then 'Miscellaneous manufactures'
+    when sitc like ('9%') then 'Unspecified goods'
+    else sector 
+    end
+;
+
+select distinct sitc, Sector 
+from fulltrade
+group by sitc, Sector;
+
+select distinct sector from fulltrade;
+
+-- Dropping sitc 
+alter table fulltrade 
+drop column sitc;
+
+-- Creating new table with aggregated rows as discussed in previous commentary points
+create table trade_clean as
+select sum(v4_0) as v4_0, mmm_yy, StandardIndustrialTradeClassification, countries_and_territories, CountriesAndTerritories, Direction, Sector
+from fulltrade 
+group by mmm_yy, StandardIndustrialTradeClassification, countries_and_territories, CountriesAndTerritories, Direction, Sector;
+
+-- Now have a table with 3 million rows - all unique to the direction, date, country and industry
+
+-- Window function to show there are no duplicates - 0 rows returned 
+with aggregated as 
+(
+select *, row_number() over(partition by mmm_yy, StandardIndustrialTradeClassification, countries_and_territories, CountriesAndTerritories, Direction, Sector) as rownum
+from trade_clean
+)
+select * 
+from aggregated 
+where rownum > 1;
+
+#### VALUE COLUMN 
+
+SELECT 
+    MIN(v4_0), MAX(v4_0), AVG(v4_0), STDDEV(v4_0)
+FROM
+    trade_clean;
+    
+SELECT 
+	COUNT(*)
+FROM
+    trade_clean
+where v4_0 = 0
+;
+
+-- 1.9 million of our rows are 0 - Should we keep these? I think it is useful to see as a value of 0 does provide useful details to see when value drops to 0 and periods of no trading 
+
+-- Sorting value data type - storing as numeric since have decimals 
+alter table trade_clean
+modify column v4_0 numeric(15,2);
+
+
+##########################################################################################################################################################################
+
+### CREATING DATA MODEL ###
+
+-- Objectve is to create a star schema model with :- 
+-- A fact table containing import and export records which will then be refreshed monthly
+-- Country dimension table
+-- Industry dimension table
+-- Date dimension table 
+
+#### Industry Dimension table 
+
+-- Create industry table
+CREATE TABLE industry_dim (
+  industry_id INT auto_increment primary key,
+  StandardIndustrialTradeClassification varchar(255) DEFAULT NULL,
+  Sector varchar(100) DEFAULT NULL
+);
+
+-- inserting industry and corresponding sector 
+insert into industry_dim (StandardIndustrialTradeClassification, Sector)
+select distinct StandardIndustrialTradeClassification, Sector 
+from trade_clean;
+
+#### Country Dimension Table
+
+-- Creating country dimension table
+Create table country_dim (
+country_id int auto_increment primary key,
+CountriesAndTerritories varchar(100) default null,
+countries_and_territories varchar(10) default null
+);
+
+-- Inserting country name and code 
+insert into country_dim (CountriesAndTerritories, countries_and_territories)
+select distinct CountriesAndTerritories, countries_and_territories
+from trade_clean;
+
+-- Adding additional columns required for analysis 
+alter table country_dim 
+add column 
+continent varchar(30) default null,
+add column 
+trade_union varchar(20) default null
+;
+
+select CountriesAndTerritories 
+from country_dim;
+
+-- Assigning continent to each country using case statement 
+update country_dim 
+set continent = case CountriesAndTerritories
+        WHEN 'Andorra' THEN 'Europe'
+        WHEN 'Albania' THEN 'Europe'
+        WHEN 'Austria' THEN 'Europe'
+        WHEN 'Belgium' THEN 'Europe'
+        WHEN 'Bosnia and Herzegovina' THEN 'Europe'
+        WHEN 'Bulgaria' THEN 'Europe'
+        WHEN 'Croatia' THEN 'Europe'
+        WHEN 'Czechia' THEN 'Europe'
+        WHEN 'Denmark' THEN 'Europe'
+        WHEN 'Estonia' THEN 'Europe'
+        WHEN 'Finland' THEN 'Europe'
+        WHEN 'France' THEN 'Europe'
+        WHEN 'Germany' THEN 'Europe'
+        WHEN 'Greece' THEN 'Europe'
+        WHEN 'Hungary' THEN 'Europe'
+        WHEN 'Iceland' THEN 'Europe'
+        WHEN 'Ireland' THEN 'Europe'
+        WHEN 'Italy' THEN 'Europe'
+        WHEN 'Kosovo' THEN 'Europe'
+        WHEN 'Latvia' THEN 'Europe'
+        WHEN 'Lithuania' THEN 'Europe'
+        WHEN 'Luxembourg' THEN 'Europe'
+        WHEN 'Malta' THEN 'Europe'
+        WHEN 'Moldova' THEN 'Europe'
+        WHEN 'Monaco' THEN 'Europe'
+        WHEN 'Montenegro' THEN 'Europe'
+        WHEN 'Netherlands' THEN 'Europe'
+        WHEN 'North Macedonia' THEN 'Europe'
+        WHEN 'Norway' THEN 'Europe'
+        WHEN 'Poland' THEN 'Europe'
+        WHEN 'Portugal' THEN 'Europe'
+        WHEN 'Romania' THEN 'Europe'
+        WHEN 'Serbia' THEN 'Europe'
+        WHEN 'Slovakia' THEN 'Europe'
+        WHEN 'Slovenia' THEN 'Europe'
+        WHEN 'Spain' THEN 'Europe'
+        WHEN 'Sweden' THEN 'Europe'
+        WHEN 'Switzerland' THEN 'Europe'
+        WHEN 'Ukraine' THEN 'Europe'
+        WHEN 'United Kingdom' THEN 'Europe'
+        WHEN 'Vatican City' THEN 'Europe'
+        WHEN 'Afghanistan' THEN 'Asia'
+        WHEN 'Armenia' THEN 'Asia'
+        WHEN 'Azerbaijan' THEN 'Asia'
+        WHEN 'Bahrain' THEN 'Asia'
+        WHEN 'Bangladesh' THEN 'Asia'
+        WHEN 'Bhutan' THEN 'Asia'
+        WHEN 'Brunei' THEN 'Asia'
+        WHEN 'Cambodia' THEN 'Asia'
+        WHEN 'China' THEN 'Asia'
+        WHEN 'Georgia' THEN 'Asia'
+        WHEN 'India' THEN 'Asia'
+        WHEN 'Indonesia' THEN 'Asia'
+        WHEN 'Iran' THEN 'Asia'
+        WHEN 'Iraq' THEN 'Asia'
+        WHEN 'Israel' THEN 'Asia'
+        WHEN 'Japan' THEN 'Asia'
+        WHEN 'Jordan' THEN 'Asia'
+        WHEN 'Kazakhstan' THEN 'Asia'
+        WHEN 'Kuwait' THEN 'Asia'
+        WHEN 'Kyrgyzstan' THEN 'Asia'
+        WHEN 'Laos' THEN 'Asia'
+        WHEN 'Lebanon' THEN 'Asia'
+        WHEN 'Malaysia' THEN 'Asia'
+        WHEN 'Maldives' THEN 'Asia'
+        WHEN 'Mongolia' THEN 'Asia'
+        WHEN 'Myanmar' THEN 'Asia'
+        WHEN 'Nepal' THEN 'Asia'
+        WHEN 'North Korea' THEN 'Asia'
+        WHEN 'Oman' THEN 'Asia'
+        WHEN 'Pakistan' THEN 'Asia'
+        WHEN 'Palestinian Territory' THEN 'Asia'
+        WHEN 'Philippines' THEN 'Asia'
+        WHEN 'Qatar' THEN 'Asia'
+        WHEN 'Saudi Arabia' THEN 'Asia'
+        WHEN 'Singapore' THEN 'Asia'
+        WHEN 'South Korea' THEN 'Asia'
+        WHEN 'Sri Lanka' THEN 'Asia'
+        WHEN 'Syria' THEN 'Asia'
+        WHEN 'Taiwan' THEN 'Asia'
+        WHEN 'Tajikistan' THEN 'Asia'
+        WHEN 'Thailand' THEN 'Asia'
+        WHEN 'East Timor' THEN 'Asia'
+        WHEN 'Turkey' THEN 'Asia'
+        WHEN 'Turkmenistan' THEN 'Asia'
+        WHEN 'United Arab Emirates' THEN 'Asia'
+        WHEN 'Uzbekistan' THEN 'Asia'
+        WHEN 'Vietnam' THEN 'Asia'
+        WHEN 'Yemen' THEN 'Asia'
+        WHEN 'Algeria' THEN 'Africa'
+        WHEN 'Angola' THEN 'Africa'
+        WHEN 'Benin' THEN 'Africa'
+        WHEN 'Botswana' THEN 'Africa'
+        WHEN 'Burkina Faso' THEN 'Africa'
+        WHEN 'Burundi' THEN 'Africa'
+        WHEN 'Cameroon' THEN 'Africa'
+        WHEN 'Cape Verde' THEN 'Africa'
+        WHEN 'Central African Republic' THEN 'Africa'
+        WHEN 'Chad' THEN 'Africa'
+        WHEN 'Comoros' THEN 'Africa'
+        WHEN 'Congo' THEN 'Africa'
+        WHEN 'Congo (Democratic Republic)' THEN 'Africa'
+        WHEN 'Djibouti' THEN 'Africa'
+        WHEN 'Egypt' THEN 'Africa'
+        WHEN 'Equatorial Guinea' THEN 'Africa'
+        WHEN 'Eritrea' THEN 'Africa'
+        WHEN 'Eswatini' THEN 'Africa'
+        WHEN 'Ethiopia' THEN 'Africa'
+        WHEN 'Gabon' THEN 'Africa'
+        WHEN 'Gambia' THEN 'Africa'
+        WHEN 'Ghana' THEN 'Africa'
+        WHEN 'Guinea' THEN 'Africa'
+        WHEN 'Guinea Bissau' THEN 'Africa'
+        WHEN 'Ivory Coast' THEN 'Africa'
+        WHEN 'Kenya' THEN 'Africa'
+        WHEN 'Lesotho' THEN 'Africa'
+        WHEN 'Liberia' THEN 'Africa'
+        WHEN 'Libya' THEN 'Africa'
+        WHEN 'Madagascar' THEN 'Africa'
+        WHEN 'Malawi' THEN 'Africa'
+        WHEN 'Mali' THEN 'Africa'
+        WHEN 'Mauritania' THEN 'Africa'
+        WHEN 'Mauritius' THEN 'Africa'
+        WHEN 'Morocco incl Western Sahara' THEN 'Africa'
+        WHEN 'Mozambique' THEN 'Africa'
+        WHEN 'Namibia' THEN 'Africa'
+        WHEN 'Niger' THEN 'Africa'
+        WHEN 'Nigeria' THEN 'Africa'
+        WHEN 'Rwanda' THEN 'Africa'
+        WHEN 'Sao Tome and Principe' THEN 'Africa'
+        WHEN 'Senegal' THEN 'Africa'
+        WHEN 'Seychelles' THEN 'Africa'
+        WHEN 'Sierra Leone' THEN 'Africa'
+        WHEN 'Somalia' THEN 'Africa'
+        WHEN 'South Africa' THEN 'Africa'
+        WHEN 'South Sudan' THEN 'Africa'
+        WHEN 'Sudan' THEN 'Africa'
+        WHEN 'Tanzania' THEN 'Africa'
+        WHEN 'Togo' THEN 'Africa'
+        WHEN 'Tunisia' THEN 'Africa'
+        WHEN 'Uganda' THEN 'Africa'
+        WHEN 'Zambia' THEN 'Africa'
+        WHEN 'Zimbabwe' THEN 'Africa'
+        WHEN 'Antigua and Barbuda' THEN 'North America'
+        WHEN 'Bahamas' THEN 'North America'
+        WHEN 'Barbados' THEN 'North America'
+        WHEN 'Belize' THEN 'North America'
+        WHEN 'Canada' THEN 'North America'
+        WHEN 'Costa Rica' THEN 'North America'
+        WHEN 'Cuba' THEN 'North America'
+        WHEN 'Dominica' THEN 'North America'
+        WHEN 'Dominican Republic' THEN 'North America'
+        WHEN 'El Salvador' THEN 'North America'
+        WHEN 'Grenada' THEN 'North America'
+        WHEN 'Guatemala' THEN 'North America'
+        WHEN 'Haiti' THEN 'North America'
+        WHEN 'Honduras' THEN 'North America'
+        WHEN 'Jamaica' THEN 'North America'
+        WHEN 'Mexico' THEN 'North America'
+        WHEN 'Nicaragua' THEN 'North America'
+        WHEN 'Panama' THEN 'North America'
+        WHEN 'St Kitts and Nevis' THEN 'North America'
+        WHEN 'St Lucia' THEN 'North America'
+        WHEN 'St Vincent' THEN 'North America'
+        WHEN 'Trinidad and Tobago' THEN 'North America'
+        WHEN 'United States' THEN 'North America'
+        WHEN 'US Virgin Islands' THEN 'North America'
+        WHEN 'British Virgin Islands' THEN 'North America'
+        WHEN 'Bermuda' THEN 'North America'
+        WHEN 'Cayman Islands' THEN 'North America'
+        WHEN 'Turks and Caicos Islands' THEN 'North America'
+        WHEN 'Montserrat' THEN 'North America'
+        WHEN 'Curacao' THEN 'North America'
+        WHEN 'Aruba' THEN 'North America'
+        WHEN 'Sint Maarten' THEN 'North America'
+        WHEN 'Bonaire, Sint Eustatius and Saba' THEN 'North America'
+        WHEN 'Anguilla' THEN 'North America'
+        WHEN 'Antigua and Barbuda' THEN 'North America'
+        WHEN 'Argentina' THEN 'South America'
+        WHEN 'Bolivia' THEN 'South America'
+        WHEN 'Brazil' THEN 'South America'
+        WHEN 'Chile' THEN 'South America'
+        WHEN 'Colombia' THEN 'South America'
+        WHEN 'Ecuador' THEN 'South America'
+        WHEN 'Guyana' THEN 'South America'
+        WHEN 'Paraguay' THEN 'South America'
+        WHEN 'Peru' THEN 'South America'
+        WHEN 'Suriname' THEN 'South America'
+        WHEN 'Uruguay' THEN 'South America'
+        WHEN 'Venezuela' THEN 'South America'
+        WHEN 'Falkland Islands' THEN 'South America'
+        WHEN 'South Georgia' THEN 'South America'
+        WHEN 'Australia' THEN 'Oceania'
+        WHEN 'New Zealand' THEN 'Oceania'
+        WHEN 'Fiji' THEN 'Oceania'
+        WHEN 'Papua New Guinea' THEN 'Oceania'
+        WHEN 'Samoa' THEN 'Oceania'
+        WHEN 'Tonga' THEN 'Oceania'
+        WHEN 'Vanuatu' THEN 'Oceania'
+        WHEN 'Kiribati' THEN 'Oceania'
+        WHEN 'Solomon Islands' THEN 'Oceania'
+        WHEN 'Micronesia' THEN 'Oceania'
+        WHEN 'Palau' THEN 'Oceania'
+        WHEN 'Tuvalu' THEN 'Oceania'
+        WHEN 'Nauru' THEN 'Oceania'
+        WHEN 'Marshall Islands' THEN 'Oceania'
+        WHEN 'French Polynesia' THEN 'Oceania'
+        WHEN 'New Caledonia' THEN 'Oceania'
+        WHEN 'Wallis and Futuna' THEN 'Oceania'
+        WHEN 'Guam' THEN 'Oceania'
+        WHEN 'Northern Mariana Islands' THEN 'Oceania'
+        WHEN 'American Samoa' THEN 'Oceania'
+        WHEN 'Cook Islands' THEN 'Oceania'
+        WHEN 'Niue Island' THEN 'Oceania'
+        WHEN 'Norfolk Island' THEN 'Oceania'
+        WHEN 'Tokelau Islands' THEN 'Oceania'
+        WHEN 'Cocos Islands' THEN 'Oceania'
+        WHEN 'Christmas Island' THEN 'Oceania'
+        WHEN 'Antarctica' THEN 'Antarctica'
+        WHEN 'Bouvet Island' THEN 'Antarctica'
+        WHEN 'French Southern Territories' THEN 'Antarctica'
+        WHEN 'Heard and McDonald Islands' THEN 'Antarctica'
+        WHEN 'South Georgia' THEN 'Antarctica'
+        WHEN 'The Gambia' THEN 'Africa'
+		WHEN 'St. Helena' THEN 'Africa'
+		WHEN 'British Indian Ocean Territory' THEN 'Africa'
+	    WHEN 'Hong Kong' THEN 'Asia'
+	    WHEN 'Macao' THEN 'Asia'
+	    WHEN 'Occupied Palestinian Territory' THEN 'Asia'
+	    WHEN 'Belarus' THEN 'Europe'
+	    WHEN 'Cyprus' THEN 'Europe'
+	    WHEN 'Faroe Islands' THEN 'Europe'
+	    WHEN 'Gibraltar' THEN 'Europe'
+	    WHEN 'Guernsey' THEN 'Europe'
+		WHEN 'Isle of Man' THEN 'Europe'
+		WHEN 'Jersey' THEN 'Europe'
+		WHEN 'Liechtenstein' THEN 'Europe'
+		WHEN 'San Marino' THEN 'Europe'
+		WHEN 'Russia' THEN 'Europe'
+		WHEN 'The Bahamas' THEN 'North America'
+		WHEN 'Greenland' THEN 'North America'
+		WHEN 'US Minor Outlying Islands' THEN 'North America'
+		WHEN 'Pitcairn' THEN 'Oceania'
+        ELSE 'Unknown'
+        end 
+        ;
+
+
+-- Mapping countries to trade union with case statement again 
+update country_dim 
+set trade_union = case 
+  WHEN CountriesAndTerritories IN (
+            'Austria','Belgium','Bulgaria','Croatia','Cyprus','Czechia',
+            'Denmark','Estonia','Finland','France','Germany','Greece',
+            'Hungary','Ireland','Italy','Latvia','Lithuania','Luxembourg',
+            'Malta','Netherlands','Poland','Portugal','Romania','Slovakia',
+            'Slovenia','Spain','Sweden'
+        ) THEN 'EU'
+        ELSE 'Rest of the World'
+        end
+        ;
+        
+        
+#### Creating date dimension 
+
+-- Current format is mmm_yy. Problem with this is if we sort by min - max it doesnt put january first.
+-- Best option for final model is to have 'yyyymm' so sorting by date min - max will be correct
+-- SQL doesnt seem to allow date format without a day and this data doesnt have that
+-- TWill change this in fact table prior to bringing over to dimension
+
+-- Changing date format in fact table using replace
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Jan-', '01');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Feb-', '02');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Mar-', '03');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Apr-', '04');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'May-', '05');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Jun-', '06');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Jul-', '07');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Aug-', '08');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Sep-', '09');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Oct-', '10');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Nov-', '11');
+update trade_clean
+set mmm_yy = replace(mmm_yy, 'Dec-', '12');
+
+-- Getting correct format yyyymm in fact table
+update trade_clean
+SET mmm_yy = CONCAT(
+	'20',
+    RIGHT(mmm_yy, 2),    
+    LEFT(mmm_yy, 2)            
+);
+
+-- Creating dimension table with trade_date as primary_id
+-- Since it is in an integer using this as the primary key will be efficient and logical
+create table date_dim (
+trade_date int primary key,
+`month` varchar (20) default null,
+`year` int default null
+);
+
+insert into date_dim (trade_date)
+select distinct mmm_yy
+from trade_clean;
+
+-- Make integer in fact table
+alter table trade_clean
+modify column mmm_yy int;
+
+-- Temporarily modify to try use case statement 
+alter table date_dim
+modify column trade_date varchar(20);
+
+update date_dim 
+set `month` = case right(trade_date, 2)
+when '01' then 'January'
+when '02' then 'February'
+when '03' then 'March'
+when '04' then 'April'
+when '05' then 'May'
+when '06' then 'June'
+when '07' then 'July'
+when '08' then 'August'
+when '09' then 'September'
+when '10' then 'October'
+when '11' then 'November'
+when '12' then 'December'
+end
+;
+
+-- Populating year column using left 
+update date_dim 
+set `Year` = left (trade_date, 4);
+
+-- Set trade_date back to integer 
+alter table date_dim
+modify column trade_date int;
+
+-- Inserting additional dates for future table updates
+
+insert into date_dim (trade_date)
+VALUES
+(202507), (202508),(202509),(202510),(202511),(202512),
+(202601),(202602),(202603),(202604),(202605),(202606),(202607),(202608),(202609),(202610),(202611),(202612),
+(202701),(202702),(202703),(202704),(202705),(202706),(202707),(202708),(202709),(202710),(202711),(202712);
+
+
+-- Adding in month number column to allow sorting in dashboard 
+
+alter table date_dim 
+add column month_num int;
+
+update date_dim
+set month_num = case
+        WHEN `month` = 'January' THEN 1
+        WHEN `month` = 'February' THEN 2
+        WHEN `month` = 'March' THEN 3
+        WHEN `month` = 'April' THEN 4
+        WHEN `month` = 'May' THEN 5
+        WHEN `month` = 'June' THEN 6
+        WHEN `month` = 'July' THEN 7
+        WHEN `month` = 'August' THEN 8
+        WHEN `month` = 'September' THEN 9
+        WHEN `month` = 'October' THEN 10
+        WHEN `month` = 'November' THEN 11
+        WHEN `month` = 'December' THEN 12
+        end
+;
+
+
+-- Now need to join to trade_clean to make new fact table 
+
+-- Creating fact_trade to work with 
+
+create table fact_trade
+like trade_clean;
+
+insert into fact_trade
+select * 
+from trade_clean;
+
+
+-- Updating fact table with country id
+-- Indexing both join columns as will be much quicker
+CREATE INDEX idx_fact_country ON fact_trade(CountriesAndTerritories);
+CREATE INDEX idx_dim_country ON country_dim(CountriesAndTerritories);
+
+alter table fact_trade 
+add column country_id int;
+
+update fact_trade as f
+join country_dim as d 
+on f.CountriesAndTerritories = d.CountriesAndTerritories
+set f.country_id = d.country_id;
+
+
+-- Updating fact table with industry id
+CREATE INDEX idx_fact_industry ON fact_trade(StandardIndustrialTradeClassification);
+CREATE INDEX idx_dim_industry ON industry_dim(StandardIndustrialTradeClassification);
+
+alter table fact_trade 
+add column industry_id int;
+
+update fact_trade as f
+join industry_dim as d 
+on f.StandardIndustrialTradeClassification = d.StandardIndustrialTradeClassification
+set f.industry_id = d.industry_id;
+
+
+-- Creating index's on foreign keys / primary keys to enhance performance
+CREATE INDEX idx_fact_date ON fact_trade(mmm_yy);
+CREATE INDEX idx_dim_date ON date_dim(trade_date);
+
+CREATE INDEX idx_fact_ind ON fact_trade(industry_id);
+CREATE INDEX idx_dim_ind ON industry_dim(industry_id);
+
+CREATE INDEX idx_fact_coun ON fact_trade(country_id);
+CREATE INDEX idx_dim_coun ON country_dim(country_id);
+
+
+-- Adding foreign keys to fact table therefore can only be filled with values from primary key in dimension table 
+ALTER TABLE fact_trade
+ADD CONSTRAINT fk_country
+FOREIGN KEY (country_id) REFERENCES country_dim(country_id)
+ON UPDATE CASCADE
+ON DELETE RESTRICT;
+
+ALTER TABLE fact_trade
+ADD CONSTRAINT fk_industry
+FOREIGN KEY (industry_id) REFERENCES industry_dim(industry_id)
+ON UPDATE CASCADE
+ON DELETE RESTRICT;
+
+ALTER TABLE fact_trade
+ADD CONSTRAINT fk_date
+FOREIGN KEY (mmm_yy) REFERENCES date_dim(trade_date)
+ON UPDATE CASCADE
+ON DELETE RESTRICT;
+
+-- Now removing duplicate columns from fact table 
+
+alter table fact_trade
+drop column countries_and_territories,
+drop column CountriesAndTerritories,
+drop column Sector,
+drop column StandardIndustrialTradeClassification;
+
+
+-- Star Schema created and ready for further analysis
+###########################################################################################################################################################
