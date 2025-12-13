@@ -1,0 +1,227 @@
+#### Trade Data ETL
+
+-- Run whole script to update fact_trade table once new monthly records become available
+-- Make sure csv path is correct when loading in the raw data
+-- Refer to 'Trade Data Preparation' for commentary / reasoning on queries
+
+-- extracting new months that we need 
+
+set global local_infile=on;
+
+CREATE TABLE staging_table (
+    v4_0 VARCHAR(255),
+    `mmm-yy` VARCHAR(20),
+    `Time` VARCHAR(50),
+    `uk-only` VARCHAR(50),
+    Geography VARCHAR(255),
+    sitc VARCHAR(255),
+    StandardIndustrialTradeClassification VARCHAR(255),
+    `countries-and-territories` VARCHAR(255),
+    CountriesAndTerritories VARCHAR(255),
+    `trade-direction` VARCHAR(50),
+    Direction VARCHAR(50)
+);
+
+
+load data local infile 'C:/Users/CalumBrown/OneDrive - Blend 360/Documents/Personal Development/Trade Project/newtrade.csv' into table staging_table
+fields terminated by ','
+enclosed by '"'
+lines terminated by '\n'
+ignore 1 lines;
+
+alter table staging_table 
+rename column `mmm-yy` to mmm_yy;
+
+alter table staging_table 
+rename column `uk-only` to uk_only;
+
+alter table staging_table 
+rename column `countries-and-territories` to countries_and_territories;
+
+alter table staging_table 
+rename column `trade-direction` to trade_direction;
+
+delete
+from staging_table 
+where mmm_yy not in ('Jul-25', 'Aug-25', 'Sep-25');
+
+alter table staging_table 
+drop column `Time`;
+
+alter table staging_table
+drop column uk_only,
+drop column Geography;
+
+delete 
+from staging_table 
+where StandardIndustrialTradeClassification in 
+('0: Food & live animals', '2: Crude materials', '3: Fuels', '4: Animal & vegetable oils & fats', '5: Chemicals', '6: Material manufactures');
+
+delete
+from staging_table
+where StandardIndustrialTradeClassification like ('33_:%');
+
+delete
+from staging_table
+where StandardIndustrialTradeClassification = '3OF: Fuels other than oil';
+
+delete
+from staging_table
+where StandardIndustrialTradeClassification = '78: Road vehicles';
+
+delete
+from staging_table
+where StandardIndustrialTradeClassification in 
+('79: Other transport equipment', '792-3: Ships & aircraft', '7EC: Electrical machinery (consumer)', '7EI: Electrical machinery (intermediate)',
+'7EK: Electrical machinery (intermediate)', '7MC: Mechanical machinery (consumer)', '7MI: Mechanical machinery (intermediate)', '7MK: Mechanical machinery (capital)'
+ );
+
+delete
+from staging_table
+where StandardIndustrialTradeClassification = '7: Machinery & transport equipment';
+
+delete 
+from staging_table
+where StandardIndustrialTradeClassification in 
+('8: Miscellaneous manufactures', '8O: Other manufactures', '8OC: Other miscellaneous manufactures (consumer)', '8OI: Other miscellaneous manufactures (intermediate)', '8OK: Other miscellaneous manufactures (capital)');
+
+
+delete
+from staging_table
+where StandardIndustrialTradeClassification = 'T: Total';
+
+update staging_table
+set StandardIndustrialTradeClassification = replace(StandardIndustrialTradeClassification, '(consumer)', '');
+
+update staging_table
+set StandardIndustrialTradeClassification = replace(StandardIndustrialTradeClassification, '(intermediate)', '');
+
+update staging_table
+set StandardIndustrialTradeClassification = replace(StandardIndustrialTradeClassification, '(capital)', '');
+
+update staging_table
+set StandardIndustrialTradeClassification = SUBSTRING_INDEX(StandardIndustrialTradeClassification, ':', -1);
+
+delete 
+from staging_table
+where CountriesAndTerritories in ('D5 - Non-EU (Rest of World)', 'B5 - EU(28)', 'W1 - Whole world');
+
+update staging_table
+set CountriesAndTerritories = 'MM - Myanmar'
+where CountriesAndTerritories = 'MM - Myanmar (Burma)';
+
+update staging_table
+set CountriesAndTerritories = 'US - United States'
+where CountriesAndTerritories like ('US - Unite%');
+
+update staging_table
+set countries_and_territories = 'NA'
+where CountriesAndTerritories = 'Namibia';
+
+update staging_table
+set CountriesAndTerritories = substring(CountriesAndTerritories, 6);
+
+update staging_table
+set countries_and_territories = 'NA'
+where CountriesAndTerritories = 'Namibia';
+
+alter table staging_table
+drop column trade_direction;
+
+alter table staging_table
+add Sector VARCHAR(100);
+
+update staging_table
+set Sector = case
+	when sitc like ('0%') then 'Food & live animals'
+	when sitc like ('1%') then 'Beverages & tobacco'
+    when sitc like ('2%') then 'Crude materials'
+    when sitc like ('3%') then 'Fuels'
+    when sitc like ('4%') then 'Animal & vegetable oils & Fats'
+    when sitc like ('5%') then 'Chemicals'
+    when sitc like ('6%') then 'Material manufactures'
+    when sitc like ('7%') then 'Machinery & transport equipment'
+    when sitc like ('8%') then 'Miscellaneous manufactures'
+    when sitc like ('9%') then 'Unspecified goods'
+    else sector 
+    end
+;
+
+alter table staging_table 
+drop column sitc;
+
+create table staging_table2 as
+select sum(v4_0) as v4_0, mmm_yy, StandardIndustrialTradeClassification, countries_and_territories, CountriesAndTerritories, Direction, Sector
+from staging_table 
+group by mmm_yy, StandardIndustrialTradeClassification, countries_and_territories, CountriesAndTerritories, Direction, Sector;
+
+alter table staging_table2 
+modify column v4_0 numeric(15,2);
+
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Jan-', '01');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Feb-', '02');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Mar-', '03');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Apr-', '04');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'May-', '05');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Jun-', '06');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Jul-', '07');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Aug-', '08');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Sep-', '09');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Oct-', '10');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Nov-', '11');
+update staging_table2
+set mmm_yy = replace(mmm_yy, 'Dec-', '12');
+
+#Getting correct format yyyymm in fact table
+update staging_table2
+SET mmm_yy = CONCAT(
+	'20',
+    RIGHT(mmm_yy, 2),    
+    LEFT(mmm_yy, 2)            
+);
+
+alter table staging_table2
+modify column mmm_yy int;
+
+alter table staging_table2 
+add column country_id int;
+
+alter table staging_table2 
+add column industry_id int;
+
+CREATE INDEX idx_staging_table2c ON staging_table2(CountriesAndTerritories);
+CREATE INDEX idx_staging_table2i ON staging_table2(StandardIndustrialTradeClassification);
+
+update staging_table2 as f
+join country_dim as d 
+on f.CountriesAndTerritories = d.CountriesAndTerritories
+set f.country_id = d.country_id;
+
+update staging_table2 as f
+join industry_dim as d 
+on f.StandardIndustrialTradeClassification = d.StandardIndustrialTradeClassification
+set f.industry_id = d.industry_id;
+
+alter table staging_table2
+drop column countries_and_territories,
+drop column CountriesAndTerritories,
+drop column Sector,
+drop column StandardIndustrialTradeClassification;
+
+insert into fact_trade (v4_0, mmm_yy, Direction, country_id, industry_id)
+select v4_0, mmm_yy, Direction, country_id, industry_id
+from staging_table2;
+
+drop table staging_table;
+drop table staging_table2;
