@@ -1,0 +1,346 @@
+##### TRADE DATA EXPORATION #####
+
+
+-- Looking at trading partners 
+-- Interesting to see certain countries that the UK are predominantly exporters / importers
+-- US, Germany, Netherlands, Ireland and France make up a large portion of UK exports
+-- These country trends are similar for imports however China are the UK's largest importer with 12.4% of all goods coming from China  
+-- Helpful for client to see which countries are our largest trading partners and therefore most demand for transports of goods and commodities
+-- Client is unsure as to whether to focus business strategy on exporting / importing so displaying both sepearted out is beneficial to help with decision making 
+
+with export_rank as
+(
+select CountriesAndTerritories, sum(v4_0) as export_amount, rank() over(order by sum(v4_0) desc) as exportrank, 
+concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as export_share
+from fact_trade as f
+join country_dim as d
+on f.country_id = d.country_id
+where Direction = 'Exports'
+group by CountriesAndTerritories
+
+),
+
+import_rank as
+(
+select CountriesAndTerritories, sum(v4_0) as import_amount, rank() over(order by sum(v4_0) desc) as importrank,
+concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as import_share
+from fact_trade as f
+join country_dim as d
+on f.country_id = d.country_id
+where Direction = 'Imports'
+group by CountriesAndTerritories
+)
+
+select * 
+from export_rank as e 
+join import_rank as i
+on e.CountriesAndTerritories = i.CountriesAndTerritories
+order by exportrank;
+
+
+-- Looking at global trading with Sector breakdowns and sector trading shares
+-- Query shows around 50% of all UK trading is within the Machinery and transport equipment sector
+-- Therefore large demand for transport within this sector
+-- Again breaking down output into imports and exports shows pretty similar market shares across all sectors and trade direction 
+
+with export_rank as
+(
+select Sector, sum(v4_0) as export_amount, rank() over(order by sum(v4_0) desc) as exportrank,
+concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as percent_of_exports
+from fact_trade as f
+join industry_dim as d
+on f.industry_id = d.industry_id
+where Direction = 'Exports'
+group by Sector
+
+),
+
+import_rank as
+(
+select Sector, sum(v4_0) as import_amount, rank() over(order by sum(v4_0) desc) as importrank,
+concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as percent_of_imports
+from fact_trade as f
+join industry_dim as d
+on f.industry_id = d.industry_id
+where Direction = 'Imports'
+group by Sector
+)
+
+select * 
+from export_rank as e 
+join import_rank as i
+on e.Sector = i.Sector
+order by exportrank;
+
+-- Diving into more detail looking now at industry breakdown of global trades
+-- Mechanical Machinery, Oil and Car industries make up roughly 25% of all exports and nearly 20% of imports. A lot of trading demand in these industries
+-- Electrical machinery the largest import industry for the UK 
+
+with export_rank as
+(
+select StandardIndustrialTradeClassification, sum(v4_0) as export_amount, rank() over(order by sum(v4_0) desc) as export_rank,
+concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as percent_of_exports
+from fact_trade as f
+join industry_dim as d
+on f.industry_id = d.industry_id
+where Direction = 'Exports'
+group by StandardIndustrialTradeClassification
+),
+import_rank as
+(
+select StandardIndustrialTradeClassification, sum(v4_0) as import_amount, rank() over(order by sum(v4_0) desc) as import_rank,
+concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as percent_of_imports
+from fact_trade as f
+join industry_dim as d
+on f.industry_id = d.industry_id 
+where Direction = 'Imports'
+group by StandardIndustrialTradeClassification
+)
+
+select * 
+from export_rank as e
+join import_rank as i 
+on e.StandardIndustrialTradeClassification = i.StandardIndustrialTradeClassification 
+order by export_rank;
+
+-- Analysing how UK trading varies across continents
+-- European countries make up over 50% of exports and nearly 60% of all imports 
+-- Majority of demand comes from Europe. Understandable due to closness and also EU tradinng regulations  
+
+with export_cte as
+(
+select continent, sum(v4_0) as export_amount, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as export_share
+from fact_trade as f
+join country_dim as d
+on f.country_id = d.country_id 
+where Direction = 'Exports'
+group by continent
+),
+
+import_cte as
+(
+select continent, sum(v4_0) as import_amount, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as import_share
+from fact_trade as f
+join country_dim as d
+on f.country_id = d.country_id 
+where Direction = 'Imports'
+group by continent
+)
+
+select *
+from export_cte as e
+join import_cte as i
+on e.continent = i.continent
+order by export_amount desc;
+
+-- Focussing on how trading regulations affect UK trades. 
+-- Can see almost a 50/50 split between EU and rest of the world. 
+-- Considering EU only makes up 27 countries of all 236 this is a very significant amount
+-- UK firms appear to prefer trading within the EU due to favourable trade agreements
+-- This will need to be considered by client when planning global trading strategy
+
+with eu_exports as 
+(
+select trade_union, sum(v4_0) as export_value, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as export_share
+from fact_trade as f
+join country_dim as d
+on f.country_id = d.country_id
+where Direction = 'Exports'
+group by trade_union
+),
+eu_imports as 
+(
+select trade_union, sum(v4_0) as import_value, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(), 2), '%') as import_share
+from fact_trade as f
+join country_dim as d
+on f.country_id = d.country_id
+where Direction = 'Imports'
+group by trade_union
+)
+
+select * 
+from eu_exports as e 
+join eu_imports as i 
+on e.trade_union = i.trade_union
+order by export_value;
+
+-- Looking at exports vs imports as a whole
+-- Below shows that the UK are in a trade deficit with almost 60% of all trades being imports. 
+-- Therefore a larger demand for import transport than exports.
+
+with net_trade as 
+(
+select 'Exports' as trade_direction, sum(v4_0) as trade_amount
+from fact_trade
+where Direction = 'Exports'
+UNION ALL 
+select 'Imports' as trade_direction, sum(v4_0) as trade_amount
+from fact_trade
+where Direction = 'Imports'
+)
+
+select trade_direction, sum(trade_amount), concat(round(sum(trade_amount) * 100 / sum(sum(trade_amount)) over(), 2), '%') as trade_share
+from net_trade
+group by trade_direction;
+
+-- How has net trading changed over the years? 
+-- Have seen 2 % increase in imports since 2023
+-- almost 4% since 2018
+-- Demand for imports is rising in comparison to exports. Important for client to consider
+ 
+select `year`, Direction, sum(v4_0) as trade_amount, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(partition by `year`), 2), '%') as trade_share
+from fact_trade as f
+join date_dim as d
+on f.mmm_yy = d.trade_date
+group by `year`, Direction
+order by `year`;
+
+-- Further analysising net trading now breaking it down into continents
+-- Import demand in Asia and Europe is pretty large at over 60% of all trades from that continent 
+
+select continent, Direction, sum(v4_0) as trade_amount, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(partition by continent), 2), '%') as trade_share
+from fact_trade as f 
+join country_dim as d 
+on f.country_id = d.country_id
+group by continent, Direction;
+
+-- Maintaining focuds on continent specific trading. Below query shows sector % breakdown within each continent
+
+select continent, Sector, sum(v4_0) as trade_amount, concat(round(sum(v4_0) * 100 / sum(sum(v4_0)) over(partition by continent), 2), '%') as trade_share
+from fact_trade as f 
+join country_dim as d 
+on f.country_id = d.country_id
+join industry_dim as i
+on f.industry_id = i.industry_id 
+group by continent, Sector
+order by continent, trade_amount desc;
+
+-- Looking at UK trading trends since 2018
+-- Removing 2025 as only part way through. Can see that global trading was significantly reduced in 2020 likely due to the covid-19 pandemic, probably affecting 2021 also.
+-- 2022 largest year in recent history possibly due to catching up for lost trading over tha pandemic
+-- UK trading appears to be trending upwards once remove 2020 and 2021 for above reasoning. Inflation will also push up these values which this dataset doesnt account for.
+
+select `year`, concat('£', sum(v4_0), ' Millions') as total_trade_amount, rank() over(order by sum(v4_0) desc) as year_rank
+from fact_trade as f
+join date_dim as d
+on f.mmm_yy = d.trade_date
+group by `year`
+having `year` != 2025
+order by year_rank;
+
+-- Looking at data since 2023 to ananlyse more recent trends
+
+create temporary table recent as 
+select * from fact_trade
+where mmm_yy >= 202301;
+
+-- Checking for monthly fluctuations
+-- Consistently see a down period in december and january - logical with business closing down for lengthy christmas periods 
+
+with trade_cte as
+(
+select `year`, `month`, sum(v4_0) as trade_amount, avg(sum(v4_0)) over() as trade_average
+from recent as f
+join date_dim as d 
+on f.mmm_yy = d.trade_date
+group by `year`, `month`
+)
+
+select *, (trade_amount - trade_average) as difference
+from trade_cte
+order by `month`;
+
+-- Sector / industry trends in 2025 so far
+
+select StandardIndustrialTradeClassification, sum(v4_0) as trade_amount, rank() over(order by sum(v4_0) desc) as trade_rank,
+concat(round(sum(v4_0) *100/ sum(sum(v4_0)) over(), 2), '%') as trade_share
+from fact_trade f
+join industry_dim i
+on f.industry_id = i.industry_id
+join date_dim  d
+on f.mmm_yy = d.trade_date
+where mmm_yy >= 202501
+group by StandardIndustrialTradeClassification
+order by trade_rank;
+
+-- Analysing emerging industry markets - biggest percentage change over last 6 months 
+-- Interesting to see some industries with big increases from june to january. 
+-- Problem is could this be a one off? Would be better to take maybe 6 month average and look against previous 6 months
+with june as 
+(
+select StandardIndustrialTradeClassification, sum(v4_0) as june_trade 
+from fact_trade as f
+join date_dim as d
+on f.mmm_yy = d.trade_date
+join industry_dim as i
+on f.industry_id = i.industry_id
+where mmm_yy = 202506 
+group by StandardIndustrialTradeClassification
+),
+january as
+(
+select StandardIndustrialTradeClassification, sum(v4_0) as january_trade
+from fact_trade as f
+join date_dim as d
+on f.mmm_yy = d.trade_date
+join industry_dim as i
+on f.industry_id = i.industry_id
+where mmm_yy = 202501 
+group by StandardIndustrialTradeClassification
+)
+
+select f.StandardIndustrialTradeClassification, january_trade, june_trade, round(((june_trade - january_trade) / january_trade) * 100, 2) as percent_change 
+from january f
+join june d
+on f.StandardIndustrialTradeClassification = d.StandardIndustrialTradeClassification
+order by percent_change desc;
+
+-- Checking 6 month averages 
+-- Good to see consistent growing industries that clinet may want to build strategy around.
+--  Fertilisers, non-ferrous metals, animal and vegetable materials, railway equipment all increasing their 6 month average by over 30%. 
+-- Shows high demand for trasnport within these industries 
+-- Also good to see indstries with biggest drop off on trades, maybe good to avoid these within global logistics strategy.
+-- Think this could be good to show on dashboard 
+
+with first6 as 
+(
+select StandardIndustrialTradeClassification, avg(v4_0) as first6
+from fact_trade as f
+join date_dim as d
+on f.mmm_yy = d.trade_date
+join industry_dim as i
+on f.industry_id = i.industry_id
+where mmm_yy >= 202407 and mmm_yy <= 202412 
+group by StandardIndustrialTradeClassification
+),
+last6 as
+(
+select StandardIndustrialTradeClassification, avg(v4_0) as last6
+from fact_trade as f
+join date_dim as d
+on f.mmm_yy = d.trade_date
+join industry_dim as i
+on f.industry_id = i.industry_id
+where mmm_yy >= 202501 and mmm_yy <= 202506
+group by StandardIndustrialTradeClassification
+)
+
+select f.StandardIndustrialTradeClassification, first6, last6, round(((last6 - first6) / first6) * 100, 2) as percent_change 
+from first6 f
+join last6 d
+on f.StandardIndustrialTradeClassification = d.StandardIndustrialTradeClassification
+order by percent_change desc;
+
+-- Working with lag window functions 
+-- Order by the column you want to lag on - this has to be an orderable column such as date or integer fact_trade
+
+select CountriesAndTerritories, sum(v4_0), trade_date, `month`, lag(sum(v4_0)) over(partition by CountriesAndTerritories order by trade_date) as prev_month
+from fact_trade f
+join country_dim d
+on f.country_id = d.country_id
+join date_dim dim
+on f.mmm_yy = dim.trade_date
+where mmm_yy >= 202501
+group by CountriesAndTerritories, trade_date;
+
+
