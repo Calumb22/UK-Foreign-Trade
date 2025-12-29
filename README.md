@@ -8,7 +8,7 @@ Data model was designed in a star schema to optimize power BI performance. Model
 
 Exploratory data analysis was conducted again using sql and then report built in power BI.
 
-ETL was built to update report and database with new monthly information as it is published to website to allow client to see most up to date figures
+ETL was built to update report and database with new monthly information as it is published to website to allow client to see most up to date figures.
 
 
 Power BI report displayed below
