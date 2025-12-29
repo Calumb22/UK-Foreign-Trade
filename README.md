@@ -13,6 +13,8 @@ ETL was built to update report and database with new monthly information as it i
 
 Power BI report displayed below
 
-<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/c3370cdd-3f34-46fc-ab12-0477bc9fb5a5" />   <img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/6a0ba0e5-b037-4f2c-8688-100cf63047b6" />
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/d9c7a4e7-5343-46f2-9821-cd2078100876" />
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/5fdbdb48-eaca-41dd-8323-fad8f43544d6" />
+
 
 
